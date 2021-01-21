@@ -41,12 +41,44 @@ class Mp4chaps extends AbstractMp4v2Executable implements TagWriterInterface
         }
     }
 
-    protected function audioFileToChaptersFile(SplFileInfo $audioFile)
+    /**
+     * @param SplFileInfo $file
+     * @param Tag $tag
+     * @param Flags $flags
+     * @throws Exception
+     */
+    private function storeTagsToFile(SplFileInfo $file, Tag $tag, Flags $flags)
     {
-        $dirName = dirname($audioFile);
-        $fileName = $audioFile->getBasename("." . $audioFile->getExtension());
-        return new SplFileInfo($dirName . DIRECTORY_SEPARATOR . $fileName . ".chapters.txt");
+        if (count($tag->chapters) === 0) {
+            return;
+        }
+        $flags = $flags ?? new Flags();
+
+        $chaptersFile = static::buildConventionalFileName($file, static::SUFFIX_CHAPTERS, "txt");
+        $chaptersFileAlreadyExisted = $chaptersFile->isFile();
+        if (!$chaptersFileAlreadyExisted || $flags->contains(static::FLAG_FORCE)) {
+            file_put_contents($chaptersFile, $this->buildChaptersTxt($tag->chapters));
+        } elseif (!$flags->contains(static::FLAG_USE_EXISTING_FILES)) {
+            throw new Exception(sprintf("Chapters file %s already exists", $chaptersFile));
+        }
+
+        $command[] = "-i";
+        $command[] = $file;
+        $process = $this->runProcess($command);
+
+
+        $keepChapterFile = $flags->contains(static::FLAG_NO_CLEANUP);
+
+        if (!$chaptersFileAlreadyExisted && !$keepChapterFile && $chaptersFile->isFile()) {
+            unlink($chaptersFile);
+        }
+
+        if ($process->getExitCode() !== 0) {
+            throw new Exception(sprintf("Could not import chapters for file: %s, %s, %d", $file, $process->getOutput() . $process->getErrorOutput(), $process->getExitCode()));
+        }
     }
+
+
 
     public function buildChaptersTxt(array $chapters)
     {
@@ -63,6 +95,21 @@ class Mp4chaps extends AbstractMp4v2Executable implements TagWriterInterface
         return implode(PHP_EOL, $chaptersAsLines);
     }
 
+    /**
+     * @param SplFileInfo $file
+     * @param Tag $tag
+     * @throws Exception
+     */
+    private function removeTagsFromFile(SplFileInfo $file, Tag $tag)
+    {
+        if (!in_array("chapters", $tag->removeProperties, true)) {
+            return;
+        }
+
+        $command[] = "-r";
+        $command[] = $file;
+        $this->runProcess($command);
+    }
 
     /**
      * @param string $chapterString
@@ -136,56 +183,5 @@ class Mp4chaps extends AbstractMp4v2Executable implements TagWriterInterface
             }
         }
         return $commentTags;
-    }
-
-
-    /**
-     * @param SplFileInfo $file
-     * @param Tag $tag
-     * @param Flags $flags
-     * @throws Exception
-     */
-    private function storeTagsToFile(SplFileInfo $file, Tag $tag, Flags $flags)
-    {
-        if (count($tag->chapters) === 0) {
-            return;
-        }
-
-        $chaptersFile = static::createConventionalFile($file, static::SUFFIX_CHAPTERS, "txt");
-        $chaptersFileAlreadyExisted = $chaptersFile->isFile();
-        if ($chaptersFileAlreadyExisted && $flags && !$flags->contains(static::FLAG_FORCE)) {
-            throw new Exception(sprintf("Chapters file %s already exists", $chaptersFile));
-        }
-        file_put_contents($chaptersFile, $this->buildChaptersTxt($tag->chapters));
-        $command[] = "-i";
-        $command[] = $file;
-        $process = $this->runProcess($command);
-
-        if ($process->getExitCode() !== 0) {
-            unlink($chaptersFile);
-            throw new Exception(sprintf("Could not import chapters for file: %s, %s, %d", $file, $process->getOutput() . $process->getErrorOutput(), $process->getExitCode()));
-        }
-
-        $keepChapterFile = $flags && $flags->contains(static::FLAG_NO_CLEANUP);
-
-        if (!$chaptersFileAlreadyExisted && !$keepChapterFile) {
-            unlink($chaptersFile);
-        }
-    }
-
-    /**
-     * @param SplFileInfo $file
-     * @param Tag $tag
-     * @throws Exception
-     */
-    private function removeTagsFromFile(SplFileInfo $file, Tag $tag)
-    {
-        if (!in_array("chapters", $tag->removeProperties, true)) {
-            return;
-        }
-
-        $command[] = "-r";
-        $command[] = $file;
-        $this->runProcess($command);
     }
 }
